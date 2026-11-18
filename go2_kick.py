@@ -23,7 +23,7 @@ BALL_Y      = -0.26     # alineada con la pata delantera derecha (FR)
 T_STAND   = 1.0         # s parado
 T_WALK    = 3.2         # s caminando (hasta aca)
 T_KICK    = 3.2         # inicio patada
-T_END     = 6.5
+T_END     = 8.0
 
 GAIT_FREQ = 2.2         # Hz
 STRIDE    = 0.28        # amplitud del muslo (rad)
@@ -33,6 +33,10 @@ KP, KD = 100.0, 1.5
 KP_KICK, KD_KICK = 220.0, 3.0   # pata que patea: mas rigida
 LEAN = 0.18                    # desplazamiento lateral del cuerpo al patear (rad)
 
+# Arco (la pelota sale con un leve angulo a la derecha, asi que el arco esta sobre esa trayectoria)
+GOAL_X, GOAL_Y = 5.0, -1.25     # posicion de la linea de gol (centro del arco)
+GOAL_W, GOAL_H, GOAL_D = 2.0, 0.9, 0.7   # ancho, alto, profundidad (m)
+
 # Colores de la cancha
 GRASS_1 = [0.16, 0.50, 0.17]
 GRASS_2 = [0.24, 0.62, 0.22]
@@ -40,6 +44,58 @@ GRASS_2 = [0.24, 0.62, 0.22]
 # Postura de pie con las patas mas extendidas (el keyframe "home" es mas agachado: 0.9 / -1.8)
 HOME = {"hip": 0.0, "thigh": 0.70, "calf": -1.40}
 LEGS = ["FL", "FR", "RL", "RR"]
+
+
+def add_goal(spec, x, y, w, h, d):
+    """Arco: postes y travesano (colisionan) + redes translucidas."""
+    wb, G = spec.worldbody, mujoco.mjtGeom
+    r = 0.035
+    white = [1, 1, 1, 1]
+
+    def bar(p1, p2, name):
+        wb.add_geom(name=name, type=G.mjGEOM_CAPSULE, size=[r, 0, 0],
+                    fromto=[*p1, *p2], rgba=white)
+
+    yl, yr = y - w / 2, y + w / 2
+    # marco frontal
+    bar((x, yl, 0), (x, yl, h), "post_left")
+    bar((x, yr, 0), (x, yr, h), "post_right")
+    bar((x, yl, h), (x, yr, h), "crossbar")
+    # marco trasero y barras laterales
+    hb = 0.6 * h
+    bar((x + d, yl, 0), (x + d, yl, hb), "back_post_left")
+    bar((x + d, yr, 0), (x + d, yr, hb), "back_post_right")
+    bar((x + d, yl, hb), (x + d, yr, hb), "back_bar")
+    bar((x, yl, h), (x + d, yl, hb), "side_bar_left")
+    bar((x, yr, h), (x + d, yr, hb), "side_bar_right")
+
+    # paneles de red invisibles: solo colisionan para que la pelota no se salga
+    # (los hilos visuales se dibujan abajo; asi se evitan sombras raras de paneles translucidos)
+    net = [1, 1, 1, 0]
+    wb.add_geom(name="net_back", type=G.mjGEOM_BOX, size=[0.005, w / 2, hb / 2],
+                pos=[x + d, y, hb / 2], rgba=net, solref=[0.03, 1], solimp=[0.5, 0.8, 0.01, 0.5, 2])
+    for sign, nm in ((-1, "net_left"), (1, "net_right")):
+        wb.add_geom(name=nm, type=G.mjGEOM_BOX, size=[d / 2, 0.005, hb / 2],
+                    pos=[x + d / 2, y + sign * w / 2, hb / 2], rgba=net,
+                    solref=[0.03, 1], solimp=[0.5, 0.8, 0.01, 0.5, 2])
+
+    # hilos de la red (solo visuales)
+    line = [1, 1, 1, 0.35]
+    for yy in np.linspace(yl, yr, 11):
+        wb.add_geom(type=G.mjGEOM_CAPSULE, size=[0.004, 0, 0], fromto=[x + d, yy, 0, x + d, yy, hb],
+                    rgba=line, contype=0, conaffinity=0)
+    for zz in np.linspace(0, hb, 6):
+        wb.add_geom(type=G.mjGEOM_CAPSULE, size=[0.004, 0, 0], fromto=[x + d, yl, zz, x + d, yr, zz],
+                    rgba=line, contype=0, conaffinity=0)
+    for sign in (-1, 1):
+        yy = y + sign * w / 2
+        for xx in np.linspace(x, x + d, 5):
+            zt = h + (hb - h) * (xx - x) / d
+            wb.add_geom(type=G.mjGEOM_CAPSULE, size=[0.004, 0, 0], fromto=[xx, yy, 0, xx, yy, zt],
+                        rgba=line, contype=0, conaffinity=0)
+    # cinta de la linea de gol en el piso
+    wb.add_geom(type=G.mjGEOM_BOX, size=[0.02, w / 2, 0.001], pos=[x, y, 0.001],
+                rgba=[1, 1, 1, 1], contype=0, conaffinity=0)
 
 
 def build_model():
@@ -57,13 +113,17 @@ def build_model():
             mat.texrepeat = [2, 2]      # mas chico = cuadros mas grandes
             mat.reflectance = 0.05
 
+    # --- arco
+    add_goal(spec, GOAL_X, GOAL_Y, GOAL_W, GOAL_H, GOAL_D)
+
     # --- pelota
     ball = spec.worldbody.add_body(name="ball", pos=[BALL_X, BALL_Y, BALL_RADIUS])
     ball.add_freejoint()
     ball.add_geom(
         name="ball_geom", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[BALL_RADIUS, 0, 0],
-        mass=BALL_MASS, rgba=[1, 1, 1, 1], friction=[0.6, 0.005, 0.02], condim=6,   # condim=6 -> friccion de rodadura (la pelota frena sola)
+        mass=BALL_MASS, rgba=[1, 1, 1, 1], friction=[0.6, 0.005, 0.004], condim=6,   # condim=6 -> friccion de rodadura (la pelota frena sola)
     )
+    spec.stat.extent = 2.0                      # evita artefactos de sombras al agrandar la escena
     return spec.compile()
 
 
@@ -95,8 +155,27 @@ def kick_targets(tk):
     return (0.0, -0.9 + (HOME['thigh'] + 0.9) * a, -0.8 + (HOME['calf'] + 0.8) * a)
 
 
+def draw_goal_text(img, since):
+    """Cartel de ¡GOOOL! sobre el video (aparece con un pequeño efecto de zoom)."""
+    from PIL import Image, ImageDraw, ImageFont
+    pil = Image.fromarray(img)
+    d = ImageDraw.Draw(pil)
+    size = int(40 + 50 * min(1.0, since / 0.4))
+    try:
+        font = ImageFont.load_default(size=size)
+    except TypeError:
+        font = ImageFont.load_default()
+    txt = "GOOOL!"
+    x0, y0, x1, y1 = d.textbbox((0, 0), txt, font=font)
+    pos = ((pil.width - (x1 - x0)) // 2, 40)
+    d.text((pos[0] + 3, pos[1] + 3), txt, font=font, fill=(0, 0, 0))
+    d.text(pos, txt, font=font, fill=(255, 215, 0))
+    return np.asarray(pil)
+
+
 def main(headless=False, out="go2_soccer_demo.mp4"):
     model = build_model()
+    model.vis.quality.shadowsize = 8192
     data = mujoco.MjData(model)
 
     # Pose inicial = keyframe oficial "home"
@@ -131,9 +210,10 @@ def main(headless=False, out="go2_soccer_demo.mp4"):
     frames, next_frame = [], 0.0
     ball_id = model.body("ball").id
     kicked_speed = 0.0
+    goal_time = None
 
     def step_once():
-        nonlocal kicked_speed
+        nonlocal kicked_speed, goal_time
         t = data.time
         # velocidad de marcha: rampa suave y frenado antes de patear
         if t < T_STAND:
@@ -153,6 +233,11 @@ def main(headless=False, out="go2_soccer_demo.mp4"):
         if t >= T_KICK:
             pd("FR", kick_targets(t - T_KICK), kp=KP_KICK, kd=KD_KICK)
         mujoco.mj_step(model, data)
+        bp = data.xpos[ball_id]
+        if (goal_time is None and t > T_KICK and bp[0] > GOAL_X + 0.05
+                and abs(bp[1] - GOAL_Y) < GOAL_W / 2 - 0.05 and bp[2] < GOAL_H):
+            goal_time = data.time
+            print(f"¡GOOOL! t={goal_time:.2f} s")
         kicked_speed = max(kicked_speed, np.linalg.norm(data.cvel[ball_id][3:]))
 
     look = np.array([0.5, -0.05, 0.15])
@@ -162,17 +247,24 @@ def main(headless=False, out="go2_soccer_demo.mp4"):
         bx = data.xpos[ball_id][0]
         target_x = data.qpos[0] + 0.5
         if data.time > T_KICK + 0.2:
-            target_x = 0.5 * (data.qpos[0] + min(bx, data.qpos[0] + 3.5)) + 0.3
+            target_x = 0.5 * (data.qpos[0] + GOAL_X + GOAL_D) + 0.5   # encuadra robot y arco
+        target_y = -0.05
+        if data.time > T_KICK + 0.2:
+            target_y = 0.5 * GOAL_Y
+        look[1] += 0.05 * (target_y - look[1])
         look[0] += 0.08 * (target_x - look[0])
         c.lookat[:] = look
-        c.distance = 2.6 + (0.9 if data.time > T_KICK else 0.0)
+        c.distance = 2.6 + (1.7 if data.time > T_KICK else 0.0)
 
     def grab():
         nonlocal next_frame
         if data.time >= next_frame:
             update_cam(cam)
             renderer.update_scene(data, camera=cam)
-            frames.append(renderer.render())
+            img = renderer.render()
+            if goal_time is not None:
+                img = draw_goal_text(img, data.time - goal_time)
+            frames.append(img)
             next_frame += 1.0 / fps
 
     if headless:
