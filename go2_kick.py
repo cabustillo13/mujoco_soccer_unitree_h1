@@ -17,8 +17,8 @@ import imageio
 # ----------------------------------------------------------------- parametros
 BALL_RADIUS = 0.11
 BALL_MASS   = 0.40
-BALL_X      = 0.95      # distancia inicial de la pelota (m)
-BALL_Y      = -0.14     # alineada con la pata delantera derecha (FR)
+BALL_X      = 1.27      # distancia inicial de la pelota (m)
+BALL_Y      = -0.26     # alineada con la pata delantera derecha (FR)
 
 T_STAND   = 1.0         # s parado
 T_WALK    = 3.2         # s caminando (hasta aca)
@@ -29,7 +29,7 @@ GAIT_FREQ = 2.2         # Hz
 STRIDE    = 0.28        # amplitud del muslo (rad)
 LIFT      = 0.55        # cuanto se pliega la rodilla al levantar la pata (rad)
 
-KP, KD = 70.0, 1.2
+KP, KD = 100.0, 1.5
 KP_KICK, KD_KICK = 220.0, 3.0   # pata que patea: mas rigida
 LEAN = 0.18                    # desplazamiento lateral del cuerpo al patear (rad)
 
@@ -37,7 +37,8 @@ LEAN = 0.18                    # desplazamiento lateral del cuerpo al patear (ra
 GRASS_1 = [0.16, 0.50, 0.17]
 GRASS_2 = [0.24, 0.62, 0.22]
 
-HOME = {"hip": 0.0, "thigh": 0.9, "calf": -1.8}
+# Postura de pie con las patas mas extendidas (el keyframe "home" es mas agachado: 0.9 / -1.8)
+HOME = {"hip": 0.0, "thigh": 0.70, "calf": -1.40}
 LEGS = ["FL", "FR", "RL", "RR"]
 
 
@@ -85,13 +86,13 @@ def kick_targets(tk):
     if tk < lift_t:                                   # levantar la pata del suelo
         a = tk / lift_t
         a = a * a * (3 - 2 * a)
-        return (0.0, 0.9 + 0.35 * a, -1.8 - 0.75 * a)
+        return (0.0, HOME['thigh'] + 0.55 * a, HOME['calf'] - 1.15 * a)
     if tk < lift_t + hit_t:                           # golpe: la pierna se extiende hacia adelante
         a = (tk - lift_t) / hit_t
         return (0.0, 1.25 - 2.15 * a, -2.55 + 1.75 * a)
     a = min(1.0, (tk - lift_t - hit_t) / rec_t)       # recuperar la pose de pie
     a = a * a * (3 - 2 * a)
-    return (0.0, -0.8 + 1.7 * a, -0.8 - 1.0 * a)
+    return (0.0, -0.9 + (HOME['thigh'] + 0.9) * a, -0.8 + (HOME['calf'] + 0.8) * a)
 
 
 def main(headless=False, out="go2_soccer_demo.mp4"):
@@ -107,6 +108,13 @@ def main(headless=False, out="go2_soccer_demo.mp4"):
            [f"{l}_{j}_joint" for l in LEGS for j in ("hip", "thigh", "calf")]}
     jv  = {n: model.jnt_dofadr[model.joint(n).id] for n in jq}
     act = {f"{l}_{j}": model.actuator(f"{l}_{j}").id for l in LEGS for j in ("hip", "thigh", "calf")}
+
+    # Arrancar ya en la postura extendida
+    for leg in LEGS:
+        for j in ("hip", "thigh", "calf"):
+            data.qpos[jq[f"{leg}_{j}_joint"]] = HOME[j]
+    data.qpos[2] = 0.33
+    mujoco.mj_forward(model, data)
 
     def pd(leg, targets, kp=KP, kd=KD):
         for j, qd in zip(("hip", "thigh", "calf"), targets):
