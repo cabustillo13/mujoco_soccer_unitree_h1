@@ -1,0 +1,8 @@
+WARNING Wed Nov 18 00:52:27 2026: Attach conflict when attaching 'go2 scene', policy is 'warning'
+impratio: parent has 1 (default), child has 100, keeping parent value
+cone: parent has 0 (default), child has 1, keeping parent value
+
+WARNING Wed Nov 18 00:53:50 2026: Attach conflict when attaching 'go2', policy is 'warning'
+impratio: parent has 1 (default), child has 100, keeping parent value
+cone: parent has 0 (default), child has 1, keeping parent value
+
